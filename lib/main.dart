@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:line_icons/line_icons.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'config/environment.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
@@ -11,11 +12,20 @@ import 'screens/wishlist/wishlist_screen.dart';
 import 'screens/cart/cart_screen.dart';
 import 'screens/profile/profile_screen.dart';
 import 'screens/shop/shop_screen.dart';
+import 'screens/checkout/checkout_screen.dart';
+import 'screens/order_confirmation/order_confirmation_screen.dart';
+import 'screens/payment/order_success_screen.dart';
+import 'screens/payment/order_failed_screen.dart';
+import 'screens/orders/order_history_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  
+  // Always use production environment
+  EnvironmentConfig.setEnvironment(Environment.production);
+  
   runApp(const PinewrapsApp());
 }
 
@@ -81,6 +91,14 @@ class PinewrapsApp extends StatelessWidget {
           '/home': (context) => const MainScreen(),
           '/register': (context) => const RegisterScreen(),
           '/forgot-password': (context) => const ForgotPasswordScreen(),
+          '/order-confirmation': (context) {
+            final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>;
+            return OrderConfirmationScreen(orderId: args['orderId']);
+          },
+          '/order-success': (context) => const OrderSuccessScreen(),
+          '/order-failed': (context) => const OrderFailedScreen(),
+          '/shop': (context) => const ShopScreen(),
+          '/profile/orders': (context) => const OrderHistoryScreen(),
         },
       ),
     );

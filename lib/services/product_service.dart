@@ -1,14 +1,15 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/product.dart';
+import '../config/environment.dart';
 
 class ProductService {
   static final ProductService _instance = ProductService._internal();
   factory ProductService() => _instance;
   ProductService._internal();
 
-  // Using local IP for Android testing
-  final String baseUrl = 'http://192.168.1.2:3001';
+  // Get base URL from environment config
+  String get baseUrl => EnvironmentConfig.baseUrl;
 
   Future<List<Product>> getAllProducts() async {
     try {

@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/auth_service.dart';
+import '../screens/auth/login_screen.dart';
+import '../screens/home/home_screen.dart';
+import '../screens/shop/shop_screen.dart';
+import '../screens/profile/profile_screen.dart';
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final bool isLoggedIn = user != null;
+
     return Drawer(
       backgroundColor: Colors.white,
       child: Column(
@@ -12,6 +21,12 @@ class AppDrawer extends StatelessWidget {
           DrawerHeader(
             decoration: const BoxDecoration(
               color: Colors.white,
+              border: Border(
+                bottom: BorderSide(
+                  color: Color(0xFFEEEEEE),
+                  width: 1,
+                ),
+              ),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -23,134 +38,111 @@ class AppDrawer extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: Colors.grey[100],
                   ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.person_outline,
-                      size: 40,
-                      color: Colors.black54,
-                    ),
-                  ),
+                  child: isLoggedIn && user.photoURL != null
+                      ? ClipOval(
+                          child: Image.network(
+                            user.photoURL!,
+                            fit: BoxFit.cover,
+                          ),
+                        )
+                      : const Center(
+                          child: Icon(
+                            Icons.person_outline,
+                            size: 40,
+                            color: Colors.black54,
+                          ),
+                        ),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'Welcome!',
-                  style: TextStyle(
+                Text(
+                  isLoggedIn ? (user.displayName ?? 'Welcome!') : 'Welcome!',
+                  style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                TextButton(
-                  onPressed: () {},
-                  child: const Text(
-                    'Sign in / Register',
-                    style: TextStyle(
-                      color: Colors.black87,
-                      decoration: TextDecoration.underline,
+                if (!isLoggedIn)
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
+                      );
+                    },
+                    child: const Text(
+                      'Sign in / Register',
+                      style: TextStyle(
+                        color: Colors.black87,
+                        decoration: TextDecoration.underline,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ),
           Expanded(
             child: ListView(
-              padding: EdgeInsets.zero,
+              padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 _buildDrawerItem(
-                  icon: Icons.home_outlined,
+                  icon: Icons.home_rounded,
                   title: 'Home',
                   onTap: () {
                     Navigator.pop(context);
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const HomeScreen(),
+                      ),
+                    );
                   },
                 ),
                 _buildDrawerItem(
-                  icon: Icons.shopping_bag_outlined,
+                  icon: Icons.shopping_bag_rounded,
                   title: 'Shop',
-                  onTap: () {},
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ShopScreen(),
+                      ),
+                    );
+                  },
                 ),
-                _buildDrawerItem(
-                  icon: Icons.local_shipping_outlined,
-                  title: 'My Orders',
-                  onTap: () {},
-                ),
-                _buildDrawerItem(
-                  icon: Icons.favorite_border,
-                  title: 'Wishlist',
-                  onTap: () {},
-                ),
-                _buildDrawerItem(
-                  icon: Icons.card_giftcard,
-                  title: 'Gift Cards',
-                  onTap: () {},
-                ),
-                const Divider(),
-                _buildDrawerItem(
-                  icon: Icons.notifications_outlined,
-                  title: 'Notifications',
-                  onTap: () {},
-                ),
-                _buildDrawerItem(
-                  icon: Icons.location_on_outlined,
-                  title: 'Addresses',
-                  onTap: () {},
-                ),
-                _buildDrawerItem(
-                  icon: Icons.payment,
-                  title: 'Payment Methods',
-                  onTap: () {},
-                ),
-                const Divider(),
-                _buildDrawerItem(
-                  icon: Icons.help_outline,
-                  title: 'Help Center',
-                  onTap: () {},
-                ),
-                _buildDrawerItem(
-                  icon: Icons.info_outline,
-                  title: 'About Us',
-                  onTap: () {},
-                ),
-                _buildDrawerItem(
-                  icon: Icons.phone_outlined,
-                  title: 'Contact Us',
-                  onTap: () {},
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.facebook_outlined, color: Colors.black87),
-                      onPressed: () {},
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.message_outlined, color: Colors.black87),
-                      onPressed: () {},
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.photo_camera_outlined, color: Colors.black87),
-                      onPressed: () {},
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Version 1.0.0',
-                  style: TextStyle(
-                    color: Colors.black54,
-                    fontSize: 12,
+                if (isLoggedIn)
+                  _buildDrawerItem(
+                    icon: Icons.person_rounded,
+                    title: 'Profile',
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ProfileScreen(),
+                        ),
+                      );
+                    },
                   ),
-                ),
               ],
             ),
           ),
+          if (isLoggedIn) ...[
+            const Divider(height: 1),
+            _buildDrawerItem(
+              icon: Icons.logout_rounded,
+              title: 'Logout',
+              onTap: () async {
+                Navigator.pop(context);
+                await AuthService().signOut();
+                // Optionally navigate to login screen or home screen after logout
+              },
+            ),
+          ],
+          const SizedBox(height: 16),
         ],
       ),
     );
@@ -162,17 +154,19 @@ class AppDrawer extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     return ListTile(
-      leading: Icon(icon, color: Colors.black87),
+      leading: Icon(icon, color: Colors.black87, size: 24),
       title: Text(
         title,
         style: const TextStyle(
           color: Colors.black87,
           fontSize: 16,
+          fontWeight: FontWeight.w500,
         ),
       ),
       onTap: onTap,
       dense: true,
-      visualDensity: const VisualDensity(horizontal: -4, vertical: -2),
+      minLeadingWidth: 24,
+      horizontalTitleGap: 12,
     );
   }
 }

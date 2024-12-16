@@ -40,4 +40,16 @@ class CartItem {
       price: price ?? this.price,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'productId': product.id,
+      'selectedSize': selectedSize,
+      'selectedFlavour': selectedFlavour,
+      'cakeText': cakeText,
+      'quantity': quantity,
+      'price': price,
+    };
+  }
 }

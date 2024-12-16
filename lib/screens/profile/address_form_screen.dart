@@ -15,9 +15,9 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
   final _nameController = TextEditingController();
   final _streetController = TextEditingController();
   final _cityController = TextEditingController();
-  final _stateController = TextEditingController();
   final _postalCodeController = TextEditingController();
   final _phoneController = TextEditingController();
+  String _selectedEmirate = 'DUBAI';
   bool _isDefault = false;
   bool _isLoading = false;
 
@@ -28,7 +28,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
       _nameController.text = widget.address!.name;
       _streetController.text = widget.address!.street;
       _cityController.text = widget.address!.city;
-      _stateController.text = widget.address!.state;
+      _selectedEmirate = widget.address!.emirate;
       _postalCodeController.text = widget.address!.postalCode;
       _phoneController.text = widget.address!.phoneNumber;
       _isDefault = widget.address!.isDefault;
@@ -40,7 +40,6 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
     _nameController.dispose();
     _streetController.dispose();
     _cityController.dispose();
-    _stateController.dispose();
     _postalCodeController.dispose();
     _phoneController.dispose();
     super.dispose();
@@ -56,7 +55,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
         name: _nameController.text,
         street: _streetController.text,
         city: _cityController.text,
-        state: _stateController.text,
+        emirate: _selectedEmirate,
         postalCode: _postalCodeController.text,
         phoneNumber: _phoneController.text,
         isDefault: _isDefault,
@@ -135,15 +134,28 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                 },
               ),
               const SizedBox(height: 16),
-              TextFormField(
-                controller: _stateController,
+              DropdownButtonFormField<String>(
+                value: _selectedEmirate,
                 decoration: const InputDecoration(
-                  labelText: 'State/Emirate',
+                  labelText: 'Emirate',
                   border: OutlineInputBorder(),
                 ),
+                items: Address.emirates.map((String emirate) {
+                  return DropdownMenuItem<String>(
+                    value: emirate,
+                    child: Text(Address.formatEmirateForDisplay(emirate)),
+                  );
+                }).toList(),
+                onChanged: (String? newValue) {
+                  if (newValue != null) {
+                    setState(() {
+                      _selectedEmirate = newValue;
+                    });
+                  }
+                },
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter the state/emirate';
+                    return 'Please select an emirate';
                   }
                   return null;
                 },

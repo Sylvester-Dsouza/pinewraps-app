@@ -21,6 +21,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _emailController = TextEditingController();
   DateTime? _selectedDate;
   bool _isLoading = false;
+  final _apiService = ApiService();
 
   @override
   void initState() {
@@ -31,19 +32,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _loadUserData() async {
     setState(() => _isLoading = true);
     try {
-      final userData = await ApiService().getCurrentUser();
-      _firstNameController.text = userData['firstName'] ?? '';
-      _lastNameController.text = userData['lastName'] ?? '';
-      // Remove +971 prefix if it exists, store only the number
-      _phoneController.text = (userData['phone'] ?? '').replaceFirst('+971', '');
-      _emailController.text = userData['email'] ?? '';
-      if (userData['dateOfBirth'] != null) {
-        _selectedDate = DateTime.parse(userData['dateOfBirth']);
-      }
+      print('Loading customer profile data...');
+      final customer = await _apiService.getCurrentCustomer();
+      print('Customer data received: ${customer.toJson()}');
+      
+      setState(() {
+        _firstNameController.text = customer.firstName;
+        _lastNameController.text = customer.lastName;
+        _emailController.text = customer.email;
+        _phoneController.text = customer.phone?.replaceFirst('+971', '') ?? '';
+        _selectedDate = customer.birthDate;
+        _isLoading = false;
+      });
     } catch (e) {
-      ToastUtils.showErrorToast('Failed to load profile: ${e.toString()}');
-    } finally {
+      print('Error loading profile data: $e');
       setState(() => _isLoading = false);
+      ToastUtils.showErrorToast('Failed to load profile data: ${e.toString()}');
     }
   }
 
@@ -68,16 +72,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       // Add +971 prefix to phone number if not already present
       String phoneNumber = _phoneController.text.trim();
-      if (!phoneNumber.startsWith('+971')) {
+      if (!phoneNumber.isEmpty && !phoneNumber.startsWith('+971')) {
         phoneNumber = '+971$phoneNumber';
       }
 
-      await ApiService().updateProfile(
-        firstName: _firstNameController.text,
-        lastName: _lastNameController.text,
-        phone: phoneNumber,
-        dateOfBirth: _selectedDate,
+      await _apiService.updateProfile(
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        phone: phoneNumber.isEmpty ? null : phoneNumber,
       );
+      
       if (!mounted) return;
       Navigator.pop(context, true);
       ToastUtils.showSuccessToast('Profile updated successfully');

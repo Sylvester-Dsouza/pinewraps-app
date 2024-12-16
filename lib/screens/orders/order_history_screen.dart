@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../services/api_service.dart';
 import '../../models/order.dart';
+import '../../services/api_service.dart';
+import '../../widgets/order_status_badge.dart';
 import 'order_details_screen.dart';
 
 class OrderHistoryScreen extends StatefulWidget {
-  const OrderHistoryScreen({super.key});
+  const OrderHistoryScreen({Key? key}) : super(key: key);
 
   @override
   State<OrderHistoryScreen> createState() => _OrderHistoryScreenState();
@@ -13,372 +14,239 @@ class OrderHistoryScreen extends StatefulWidget {
 
 class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
   final _apiService = ApiService();
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _error;
   List<Order> _orders = [];
-  int _selectedTabIndex = 0;
-
-  final List<String> _tabs = [
-    'All Orders',
-    'Delivered',
-    'Processing',
-    'Cancelled',
-  ];
+  int _page = 1;
+  bool _hasMore = true;
+  final int _limit = 10;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _fetchOrders();
+    _loadOrders();
+    _scrollController.addListener(_onScroll);
   }
 
-  Future<void> _fetchOrders() async {
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels == _scrollController.position.maxScrollExtent) {
+      if (!_isLoading && _hasMore) {
+        _loadMoreOrders();
+      }
+    }
+  }
+
+  Future<void> _loadOrders() async {
+    if (_isLoading) return;
+
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      OrderStatus? status;
-      switch (_selectedTabIndex) {
-        case 1:
-          status = OrderStatus.COMPLETED;
-          break;
-        case 2:
-          status = OrderStatus.PROCESSING;
-          break;
-        case 3:
-          status = OrderStatus.CANCELLED;
-          break;
-        default:
-          status = null;
-      }
-
-      final orders = await _apiService.getOrders(status: status);
-      if (mounted) {
-        setState(() {
-          _orders = orders;
-          _isLoading = false;
-        });
-      }
+      final orders = await _apiService.getOrders(page: _page, limit: _limit);
+      setState(() {
+        _orders = orders.results;
+        _hasMore = orders.pagination.total > _orders.length;
+        _isLoading = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
     }
   }
 
-  Color _getStatusColor(OrderStatus status) {
-    switch (status) {
-      case OrderStatus.PENDING:
-      case OrderStatus.PROCESSING:
-        return Colors.orange;
-      case OrderStatus.COMPLETED:
-        return Colors.green;
-      case OrderStatus.CANCELLED:
-        return Colors.red;
-      case OrderStatus.REFUNDED:
-        return Colors.purple;
-      case OrderStatus.all:
-        return Colors.grey;
+  Future<void> _loadMoreOrders() async {
+    if (_isLoading || !_hasMore) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final orders = await _apiService.getOrders(page: _page + 1, limit: _limit);
+      setState(() {
+        _orders.addAll(orders.results);
+        _page++;
+        _hasMore = orders.pagination.total > _orders.length;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
     }
   }
 
-  String _getStatusText(OrderStatus status) {
-    switch (status) {
-      case OrderStatus.PENDING:
-      case OrderStatus.PROCESSING:
-        return 'Processing';
-      case OrderStatus.COMPLETED:
-        return 'Delivered';
-      case OrderStatus.CANCELLED:
-        return 'Canceled';
-      case OrderStatus.REFUNDED:
-        return 'Refunded';
-      case OrderStatus.all:
-        return '';
-    }
-  }
-
-  Widget _buildOrderCard(Order order) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Order No ${order.orderNumber}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 16,
-                  ),
-                ),
-                Text(
-                  DateFormat('dd/MM/yyyy').format(order.createdAt),
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Text(
-                  'Quantity: ${order.items.length.toString().padLeft(2, '0')}',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(width: 24),
-                Text(
-                  'Total Amount: \$${order.total.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => OrderDetailsScreen(orderId: order.id),
-                      ),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    minimumSize: const Size(80, 36),
-                  ),
-                  child: const Text('Detail'),
-                ),
-                if (order.status == OrderStatus.PENDING ||
-                    order.status == OrderStatus.PROCESSING) ...[
-                  const SizedBox(width: 12),
-                  OutlinedButton(
-                    onPressed: () async {
-                      final confirm = await showDialog<bool>(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Cancel Order'),
-                          content: const Text('Are you sure you want to cancel this order?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text('No'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, true),
-                              style: TextButton.styleFrom(
-                                foregroundColor: Colors.red,
-                              ),
-                              child: const Text('Yes'),
-                            ),
-                          ],
-                        ),
-                      );
-
-                      if (confirm == true) {
-                        try {
-                          await _apiService.cancelOrder(order.id);
-                          _fetchOrders();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Order cancelled successfully'),
-                              ),
-                            );
-                          }
-                        } catch (e) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Failed to cancel order: $e'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          }
-                        }
-                      }
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      side: const BorderSide(color: Colors.grey),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      minimumSize: const Size(80, 36),
-                    ),
-                    child: const Text('Cancel'),
-                  ),
-                ],
-                const Spacer(),
-                if (order.status != OrderStatus.PENDING)
-                  Row(
-                    children: [
-                      if (order.status == OrderStatus.PROCESSING)
-                        const Icon(
-                          Icons.access_time,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _getStatusText(order.status),
-                        style: TextStyle(
-                          color: _getStatusColor(order.status),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _refreshOrders() async {
+    _page = 1;
+    _hasMore = true;
+    await _loadOrders();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: const Text('My Orders'),
-        centerTitle: true,
+        elevation: 0,
       ),
-      body: Column(
-        children: [
-          Container(
-            height: 48,
-            margin: const EdgeInsets.symmetric(vertical: 8),
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _tabs.length,
-              itemBuilder: (context, index) {
-                final isSelected = _selectedTabIndex == index;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _selectedTabIndex = index;
-                    });
-                    _fetchOrders();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    margin: const EdgeInsets.only(right: 8),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: isSelected ? Colors.black : Colors.transparent,
-                          width: 2,
+      body: RefreshIndicator(
+        onRefresh: _refreshOrders,
+        child: _isLoading && _orders.isEmpty
+            ? const Center(
+                child: CircularProgressIndicator(),
+              )
+            : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Error: $_error',
+                          style: const TextStyle(color: Colors.red),
+                          textAlign: TextAlign.center,
                         ),
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        _tabs[index],
-                        style: TextStyle(
-                          color: isSelected ? Colors.black : Colors.grey,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: _loadOrders,
+                          child: const Text('Retry'),
                         ),
-                      ),
+                      ],
                     ),
-                  ),
-                );
-              },
-            ),
-          ),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
+                  )
+                : _orders.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(
-                              Icons.error_outline,
-                              color: Colors.red,
-                              size: 48,
+                            Icon(
+                              Icons.shopping_bag_outlined,
+                              size: 64,
+                              color: Colors.grey[400],
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'Error: $_error',
-                              style: const TextStyle(color: Colors.red),
-                              textAlign: TextAlign.center,
+                              'No orders yet',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: _fetchOrders,
-                              child: const Text('Retry'),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Your order history will appear here',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[500],
+                              ),
                             ),
                           ],
                         ),
                       )
-                    : RefreshIndicator(
-                        onRefresh: _fetchOrders,
-                        child: _orders.isEmpty
-                            ? Center(
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _orders.length + (_hasMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == _orders.length) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          }
+
+                          final order = _orders[index];
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => OrderDetailsScreen(order: order),
+                                  ),
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
                                 child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Icon(
-                                      Icons.shopping_bag_outlined,
-                                      size: 64,
-                                      color: Colors.grey[400],
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Order ${order.orderNumber}',
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              DateFormat('MMM d, yyyy').format(order.createdAt),
+                                              style: TextStyle(
+                                                color: Colors.grey[600],
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        OrderStatusBadge(status: order.status),
+                                      ],
                                     ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No orders found',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        color: Colors.grey[600],
-                                      ),
+                                    const Divider(height: 24),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          '${order.items.length} item${order.items.length == 1 ? '' : 's'}',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        Text(
+                                          'AED ${order.total.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.green,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                              )
-                            : ListView.builder(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                itemCount: _orders.length,
-                                itemBuilder: (context, index) =>
-                                    _buildOrderCard(_orders[index]),
                               ),
+                            ),
+                          );
+                        },
                       ),
-          ),
-        ],
       ),
     );
   }

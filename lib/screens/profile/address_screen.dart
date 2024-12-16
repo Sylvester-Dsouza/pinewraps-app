@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/address.dart';
 import '../../services/api_service.dart';
 import '../../utils/toast_utils.dart';
+import '../../widgets/address_card.dart';
 import 'edit_address_screen.dart';
 
 class AddressScreen extends StatefulWidget {
@@ -14,7 +15,9 @@ class AddressScreen extends StatefulWidget {
 class _AddressScreenState extends State<AddressScreen> {
   final _apiService = ApiService();
   bool _isLoading = true;
+  Map<String, bool> _operationLoading = {};
   List<Address> _addresses = [];
+  Address? _addressesCache;
 
   @override
   void initState() {
@@ -23,34 +26,85 @@ class _AddressScreenState extends State<AddressScreen> {
   }
 
   Future<void> _loadAddresses() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       final addresses = await _apiService.getAddresses();
-      setState(() => _addresses = addresses);
+      if (!mounted) return;
+      setState(() {
+        _addresses = addresses;
+        _isLoading = false;
+      });
     } catch (e) {
-      ToastUtils.showErrorToast('Failed to load addresses: ${e.toString()}');
-    } finally {
+      if (!mounted) return;
       setState(() => _isLoading = false);
+      ToastUtils.showErrorToast('Failed to load addresses');
     }
   }
 
   Future<void> _deleteAddress(Address address) async {
+    if (!mounted || _operationLoading[address.id!] == true) return;
+    
+    setState(() => _operationLoading[address.id!] = true);
     try {
       await _apiService.deleteAddress(address.id!);
+      if (!mounted) return;
+      setState(() {
+        _addresses.removeWhere((a) => a.id == address.id);
+        _operationLoading.remove(address.id);
+      });
       ToastUtils.showSuccessToast('Address deleted successfully');
-      _loadAddresses();
     } catch (e) {
-      ToastUtils.showErrorToast('Failed to delete address: ${e.toString()}');
+      if (!mounted) return;
+      setState(() => _operationLoading.remove(address.id));
+      ToastUtils.showErrorToast('Failed to delete address');
     }
   }
 
   Future<void> _setDefaultAddress(Address address) async {
+    if (!mounted || _operationLoading[address.id!] == true) return;
+    
+    setState(() => _operationLoading[address.id!] = true);
     try {
-      await _apiService.setDefaultAddress(address.id!);
+      final updatedAddress = await _apiService.setDefaultAddress(address.id!);
+      if (!mounted) return;
+      setState(() {
+        // Update all addresses to not default
+        _addresses = _addresses.map((a) => 
+          a.copyWith(isDefault: a.id == address.id)
+        ).toList();
+        _operationLoading.remove(address.id);
+      });
       ToastUtils.showSuccessToast('Default address updated');
-      _loadAddresses();
     } catch (e) {
-      ToastUtils.showErrorToast('Failed to set default address: ${e.toString()}');
+      if (!mounted) return;
+      setState(() => _operationLoading.remove(address.id));
+      ToastUtils.showErrorToast('Failed to set default address');
+    }
+  }
+
+  Future<void> _editAddress(Address address) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditAddressScreen(address: address),
+      ),
+    );
+    if (result == true) {
+      // Force a fresh reload of addresses
+      await _loadAddresses();
+    }
+  }
+
+  Future<void> _addNewAddress() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const EditAddressScreen(),
+      ),
+    );
+    if (result == true) {
+      await _loadAddresses();
     }
   }
 
@@ -60,257 +114,62 @@ class _AddressScreenState extends State<AddressScreen> {
       appBar: AppBar(
         title: const Text('My Addresses'),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _addresses.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.location_off_outlined,
-                        size: 64,
-                        color: Colors.grey[400],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No addresses found',
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.grey[600],
+      body: RefreshIndicator(
+        onRefresh: _loadAddresses,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _addresses.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.location_off_outlined,
+                          size: 64,
+                          color: Colors.grey[400],
                         ),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          final result = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const EditAddressScreen(),
-                            ),
-                          );
-                          if (result == true) {
-                            _loadAddresses();
-                          }
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add New Address'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
+                        const SizedBox(height: 16),
+                        Text(
+                          'No addresses found',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.grey[600],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadAddresses,
-                  child: ListView.builder(
+                        const SizedBox(height: 24),
+                        ElevatedButton.icon(
+                          onPressed: _addNewAddress,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add New Address'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: _addresses.length,
                     itemBuilder: (context, index) {
                       final address = _addresses[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () async {
-                            final result = await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => EditAddressScreen(
-                                  address: address,
-                                ),
-                              ),
-                            );
-                            if (result == true) {
-                              _loadAddresses();
-                            }
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      address.name,
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    if (address.isDefault)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(context)
-                                              .primaryColor
-                                              .withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Text(
-                                          'Default',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Theme.of(context).primaryColor,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    const Spacer(),
-                                    PopupMenuButton<String>(
-                                      onSelected: (value) async {
-                                        switch (value) {
-                                          case 'edit':
-                                            final result = await Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (context) =>
-                                                    EditAddressScreen(
-                                                  address: address,
-                                                ),
-                                              ),
-                                            );
-                                            if (result == true) {
-                                              _loadAddresses();
-                                            }
-                                            break;
-                                          case 'delete':
-                                            // Show confirmation dialog
-                                            final confirm = await showDialog<bool>(
-                                              context: context,
-                                              builder: (context) => AlertDialog(
-                                                title:
-                                                    const Text('Delete Address?'),
-                                                content: const Text(
-                                                    'Are you sure you want to delete this address?'),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                            context, false),
-                                                    child: const Text('Cancel'),
-                                                  ),
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                            context, true),
-                                                    style: TextButton.styleFrom(
-                                                      foregroundColor: Colors.red,
-                                                    ),
-                                                    child: const Text('Delete'),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                            if (confirm == true) {
-                                              await _deleteAddress(address);
-                                            }
-                                            break;
-                                          case 'default':
-                                            await _setDefaultAddress(address);
-                                            break;
-                                        }
-                                      },
-                                      itemBuilder: (context) => [
-                                        const PopupMenuItem(
-                                          value: 'edit',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.edit_outlined),
-                                              SizedBox(width: 8),
-                                              Text('Edit'),
-                                            ],
-                                          ),
-                                        ),
-                                        if (!address.isDefault)
-                                          const PopupMenuItem(
-                                            value: 'default',
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.check_circle_outline),
-                                                SizedBox(width: 8),
-                                                Text('Set as Default'),
-                                              ],
-                                            ),
-                                          ),
-                                        const PopupMenuItem(
-                                          value: 'delete',
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.delete_outline,
-                                                color: Colors.red,
-                                              ),
-                                              SizedBox(width: 8),
-                                              Text(
-                                                'Delete',
-                                                style: TextStyle(
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  address.street,
-                                  style: const TextStyle(fontSize: 16),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '${address.city}, ${address.state} ${address.postalCode}',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Phone: ${address.phoneNumber}',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                      return AddressCard(
+                        address: address,
+                        isLoading: _operationLoading[address.id] ?? false,
+                        onSetDefault: () => _setDefaultAddress(address),
+                        onDelete: () => _deleteAddress(address),
+                        onEdit: () => _editAddress(address),
                       );
                     },
                   ),
-                ),
-      floatingActionButton: !_addresses.isEmpty
-          ? FloatingActionButton(
-              onPressed: () async {
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const EditAddressScreen(),
-                  ),
-                );
-                if (result == true) {
-                  _loadAddresses();
-                }
-              },
-              child: const Icon(Icons.add),
-            )
-          : null,
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addNewAddress,
+        child: const Icon(Icons.add),
+      ),
     );
   }
 }

@@ -169,7 +169,8 @@ class AuthService {
 
   // Get user profile from backend
   Future<Map<String, dynamic>> getUserProfile() async {
-    return await _apiService.getCurrentUser();
+    final customerDetails = await _apiService.getCurrentCustomer();
+    return customerDetails.toJson();
   }
 
   // Update user profile
@@ -178,10 +179,11 @@ class AuthService {
     String? lastName,
     String? phone,
   }) async {
-    return await _apiService.updateProfile(
+    final customerDetails = await _apiService.updateProfile(
       firstName: firstName,
       lastName: lastName,
       phone: phone,
     );
+    return customerDetails.toJson();
   }
 }

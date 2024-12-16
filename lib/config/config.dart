@@ -1,3 +1,3 @@
 class AppConfig {
-  static const String apiUrl = 'http://192.168.1.2:3001/api';
+  static const String apiUrl = 'https://pinewraps-api.onrender.com';
 }

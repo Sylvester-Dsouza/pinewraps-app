@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../utils/toast_utils.dart';
 import 'address_screen.dart';
 import 'help_support_screen.dart';
 import 'edit_profile_screen.dart';
 import '../orders/order_history_screen.dart';
+import './rewards_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -13,6 +15,30 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final _authService = AuthService();
+  Map<String, dynamic>? _userProfile;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    setState(() => _isLoading = true);
+    try {
+      final profile = await _authService.getUserProfile();
+      setState(() {
+        _userProfile = profile;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading profile: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
   Widget _buildUserInfo() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -34,21 +60,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(width: 16),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Guest User',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                    if (_isLoading)
+                      const Text(
+                        'Loading...',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    else
+                      Text(
+                        _userProfile != null
+                            ? '${_userProfile!['firstName']} ${_userProfile!['lastName']}'
+                            : 'Guest User',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 4),
                     Text(
-                      'Welcome to Pinewraps',
-                      style: TextStyle(
+                      _userProfile != null ? _userProfile!['email'] : 'Welcome to Pinewraps',
+                      style: const TextStyle(
                         color: Colors.grey,
                       ),
                     ),
@@ -68,7 +105,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
               if (result == true) {
                 // Refresh profile data if edit was successful
-                setState(() {});
+                _loadUserProfile();
               }
             },
             style: ElevatedButton.styleFrom(
@@ -137,7 +174,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const Padding(
                   padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
                   child: Text(
-                    'Account Settings',
+                    'My Account',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -145,21 +182,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                 ),
-                _buildMenuItem(
-                  icon: Icons.location_on_outlined,
-                  title: 'Delivery Addresses',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AddressScreen(),
-                      ),
-                    );
-                  },
-                ),
-                _buildMenuItem(
-                  icon: Icons.shopping_bag_outlined,
-                  title: 'Order History',
+                ListTile(
+                  leading: const Icon(Icons.local_shipping_outlined),
+                  title: const Text('My Orders'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -169,23 +195,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     );
                   },
                 ),
-                _buildMenuItem(
-                  icon: Icons.notifications_outlined,
-                  title: 'Notifications',
+                ListTile(
+                  leading: const Icon(Icons.star_border_rounded),
+                  title: const Text('My Rewards'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const RewardsScreen(),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.location_on_outlined),
+                  title: const Text('Delivery Addresses'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AddressScreen(),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: const Text('Notifications'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: () {
                     // TODO: Navigate to notifications
                   },
                 ),
-                _buildMenuItem(
-                  icon: Icons.settings_outlined,
-                  title: 'Settings',
-                  onTap: () {
-                    // TODO: Navigate to settings
-                  },
-                ),
-                _buildMenuItem(
-                  icon: Icons.help_outline,
-                  title: 'Help & Support',
+                ListTile(
+                  leading: const Icon(Icons.help_outline),
+                  title: const Text('Help & Support'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -195,28 +242,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     );
                   },
                 ),
-                const SizedBox(height: 20),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
-                  child: Text(
-                    'Other',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-                _buildMenuItem(
-                  icon: Icons.logout,
-                  title: 'Logout',
-                  iconColor: Colors.red,
+                ListTile(
+                  leading: const Icon(Icons.logout, color: Colors.red),
+                  title: const Text('Logout', style: TextStyle(color: Colors.red)),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.red),
                   onTap: () async {
                     final authService = AuthService();
                     await authService.signOut();
                     // No need to navigate as auth state listener will handle it
                   },
-                  showDivider: false,
                 ),
                 const SizedBox(height: 20),
               ],

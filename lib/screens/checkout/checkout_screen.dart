@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import '../payment/payment_screen.dart';
 import '../../services/cart_service.dart';
 import '../../services/api_service.dart';
+import '../../services/payment_service.dart';
 import '../../models/address.dart';
+import '../../models/customer_details.dart';
 
 enum DeliveryMethod { storePickup, standardDelivery }
 
@@ -15,10 +18,12 @@ class CheckoutScreen extends StatefulWidget {
 class _CheckoutScreenState extends State<CheckoutScreen> {
   final CartService _cartService = CartService();
   final ApiService _apiService = ApiService();
+  final PaymentService _paymentService = PaymentService();
   final _formKey = GlobalKey<FormState>();
   
   // Form fields
-  final _nameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _streetController = TextEditingController();
@@ -27,6 +32,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final _pincodeController = TextEditingController();
   final _couponController = TextEditingController();
   final _giftMessageController = TextEditingController();
+  
+  // Read-only flags
+  bool _firstNameReadOnly = false;
+  bool _lastNameReadOnly = false;
+  bool _emailReadOnly = false;
+  bool _phoneReadOnly = false;
+  bool _streetReadOnly = false;
+  bool _apartmentReadOnly = false;
+  bool _cityReadOnly = false;
+  bool _pincodeReadOnly = false;
   
   // UAE Emirates
   final List<String> _emirates = [
@@ -44,11 +59,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // Define emirates list and their corresponding time slots
   final Map<String, List<String>> _emirateTimeSlots = {
     'Dubai': [
-      '9:00 AM - 11:00 AM',
-      '11:00 AM - 1:00 PM',
-      '1:00 PM - 3:00 PM',
-      '3:00 PM - 5:00 PM',
-      '5:00 PM - 7:00 PM',
+      '10:00 AM - 12:00 PM',
+      '12:00 PM - 2:00 PM',
+      '2:00 PM - 4:00 PM',
+      '4:00 PM - 6:00 PM',
+      '6:00 PM - 8:00 PM',
     ],
     'Abu Dhabi': [
       '10:00 AM - 2:00 PM',
@@ -73,10 +88,24 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     'Umm Al Quwain': [
       '10:00 AM - 2:00 PM',
       '2:00 PM - 6:00 PM',
-    ],
+    ]
+  };
+
+  final List<String> _pickupTimeSlots = [
+    '10:00 AM - 11:00 AM',
+    '11:00 AM - 12:00 PM',
+    '12:00 PM - 1:00 PM',
+    '1:00 PM - 2:00 PM',
+    '2:00 PM - 3:00 PM',
+    '3:00 PM - 4:00 PM',
+    '4:00 PM - 5:00 PM',
+    '5:00 PM - 6:00 PM',
+    '6:00 PM - 7:00 PM',
+    '7:00 PM - 8:00 PM',
+    '8:00 PM - 9:00 PM',
   ];
 
-  DeliveryMethod _deliveryMethod = DeliveryMethod.storePickup;
+  DeliveryMethod _selectedDeliveryMethod = DeliveryMethod.standardDelivery;
   DateTime? _selectedDate;
   String? _selectedTimeSlot;
   bool _isGift = false;
@@ -84,81 +113,354 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _isLoading = true;
   List<Address> _savedAddresses = [];
   Address? _selectedAddress;
-
-  // Add new variables for price breakdown
-  double _pointsValue = 0;
+  CustomerDetails? _customerDetails;
+  bool _isPointsRedeemed = false;
+  final pointsController = TextEditingController();
+  static const double POINTS_REDEMPTION_RATE = 1/3; // 3 points = 1 AED
   String? _couponCode;
   double _couponDiscount = 0;
-  bool _isPointsRedeemed = false;
-  static const int POINTS_TO_REDEEM = 100; // Static for now
-  static const double POINTS_VALUE = 10; // 10 AED for 100 points
 
   @override
   void initState() {
     super.initState();
-    _loadUserDetails();
-    _loadSavedAddresses();
+    _loadCustomerDetails();
   }
 
-  Future<void> _loadUserDetails() async {
+  double _calculateTotal() {
+    double total = _cartService.totalPrice;
+    
+    // Add delivery charge if applicable
+    if (_selectedDeliveryMethod == DeliveryMethod.standardDelivery) {
+      total += _deliveryCharge;
+    }
+    
+    // Subtract points value if redeemed
+    if (_isPointsRedeemed) {
+      total -= _calculatePointsDiscount();
+    }
+    
+    // Subtract coupon discount if applied
+    if (_appliedCoupon) {
+      total -= _couponDiscount;
+    }
+    
+    return total;
+  }
+
+  double _calculatePointsDiscount() {
+    if (!_isPointsRedeemed || pointsController.text.isEmpty || _customerDetails == null) return 0;
+    int points = int.tryParse(pointsController.text) ?? 0;
+    points = points > _customerDetails!.rewardPoints ? _customerDetails!.rewardPoints : points;
+    return (points * POINTS_REDEMPTION_RATE);
+  }
+
+  Future<void> _loadCustomerDetails() async {
     try {
-      setState(() => _isLoading = true);
-      final userData = await _apiService.getCurrentUser();
+      final response = await _apiService.sendRequest(
+        '/customers/profile',
+        method: 'GET',
+      );
+
+      if (response.statusCode != 200 || response.data == null) {
+        throw Exception('Failed to load customer details');
+      }
+
+      final customerData = response.data['data'];
       
       setState(() {
-        _nameController.text = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
-        _emailController.text = userData['email'] ?? '';
-        _phoneController.text = userData['phone'] ?? '';
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load user details')),
-      );
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
+        // Set customer details
+        _customerDetails = CustomerDetails(
+          id: customerData['id'],
+          firstName: customerData['firstName'],
+          lastName: customerData['lastName'],
+          email: customerData['email'],
+          phone: customerData['phone'] ?? '',
+          rewardPoints: customerData['rewardPoints'] ?? 0,
+        );
 
-  Future<void> _loadSavedAddresses() async {
-    try {
-      final addresses = await _apiService.getAddresses();
-      setState(() {
-        _savedAddresses = addresses;
+        // Set form fields
+        _firstNameController.text = customerData['firstName'];
+        _lastNameController.text = customerData['lastName'];
+        _emailController.text = customerData['email'];
+        _phoneController.text = customerData['phone'] ?? '';
+        
+        // Make fields read-only
+        _firstNameReadOnly = true;
+        _lastNameReadOnly = true;
+        _emailReadOnly = true;
+        _phoneReadOnly = true;
+
+        // Set addresses
+        _savedAddresses = (customerData['addresses'] as List)
+            .map((addr) => Address(
+                  id: addr['id'],
+                  street: addr['street'],
+                  apartment: addr['apartment'] ?? '',
+                  emirate: addr['emirate'],
+                  city: addr['city'],
+                  pincode: addr['pincode'] ?? '',
+                  isDefault: addr['isDefault'] ?? false,
+                ))
+            .toList();
+
         // Set default address if available
-        if (addresses.isNotEmpty) {
-          _selectedAddress = addresses.firstWhere(
+        if (_savedAddresses.isNotEmpty) {
+          _selectedAddress = _savedAddresses.firstWhere(
             (addr) => addr.isDefault,
-            orElse: () => addresses.first,
+            orElse: () => _savedAddresses.first,
           );
           _updateShippingFields(_selectedAddress!);
         }
+
+        _isLoading = false;
       });
     } catch (e) {
+      print('Error loading customer details: $e');
+      if (!mounted) return;
+      
+      setState(() => _isLoading = false);
+      
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load saved addresses')),
+        const SnackBar(
+          content: Text('Failed to load customer details. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
 
-  void _updateShippingFields(Address address) {
-    _streetController.text = address.street;
-    _apartmentController.text = address.apartment ?? '';
-    _cityController.text = address.city;
-    _selectedEmirate = address.state;
-    _pincodeController.text = address.postalCode;
+  Future<void> _selectDate(BuildContext context) async {
+    final now = DateTime.now();
+    final firstDate = now.add(const Duration(days: 1));
+    final lastDate = now.add(const Duration(days: 30));
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: firstDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+    );
+
+    if (picked != null) {
+      setState(() => _selectedDate = picked);
+    }
   }
 
-  void _updateDeliveryCharge(String? emirate) {
+  void _updateDeliveryCharge() {
+    if (_selectedEmirate == null) return;
+
     setState(() {
-      _selectedEmirate = emirate;
-      _selectedTimeSlot = null; // Reset time slot when emirate changes
-      _deliveryCharge = emirate == 'Dubai' ? 30 : 40;
+      switch (_selectedEmirate) {
+        case 'Dubai':
+          _deliveryCharge = 10;
+          break;
+        case 'Abu Dhabi':
+        case 'Sharjah':
+          _deliveryCharge = 15;
+          break;
+        default:
+          _deliveryCharge = 20;
+      }
     });
+  }
+
+  Future<void> _applyCoupon() async {
+    final code = _couponController.text.trim();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please enter a coupon code')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final response = await _apiService.validateCoupon(code);
+      final data = response.data as Map<String, dynamic>;
+      
+      setState(() {
+        _couponCode = code;
+        _couponDiscount = (data['discount'] as num).toDouble();
+        _appliedCoupon = true;
+        _isLoading = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Coupon applied successfully!')),
+      );
+    } catch (e) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    }
+  }
+
+  void _removeCoupon() {
+    setState(() {
+      _couponCode = null;
+      _couponDiscount = 0;
+      _appliedCoupon = false;
+      _couponController.clear();
+    });
+  }
+
+  Future<void> _placeOrder() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    
+    try {
+      // Create order first
+      final response = await _apiService.sendRequest(
+        '/orders',
+        method: 'POST',
+        data: _buildOrderData(),
+      );
+
+      if (response.statusCode != 200 || response.data == null) {
+        throw Exception('Failed to create order');
+      }
+
+      final orderId = response.data['data']['id'];
+
+      await _processPayment(orderId);
+    } catch (e) {
+      print('Error placing order: $e');
+      if (!mounted) return;
+      
+      setState(() => _isLoading = false);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _processPayment(String orderId) async {
+    try {
+      // Get payment URL from payment service
+      final paymentData = await _paymentService.createPaymentOrder(
+        orderId: orderId,
+      );
+
+      if (!mounted) return;
+
+      // Show payment screen
+      final paymentResult = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PaymentScreen(
+            paymentUrl: paymentData['paymentUrl']!,
+            orderId: orderId,
+            reference: paymentData['reference']!,
+            onPaymentComplete: (success) {
+              if (success) {
+                // Clear cart and show success message
+                _cartService.clearCart();
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/orders',
+                  (route) => false,
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Payment failed. Please try again.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+          ),
+        ),
+      );
+
+      if (paymentResult == false) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment was cancelled. Please try again.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      print('Error processing payment: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to process payment: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Map<String, dynamic> _buildOrderData() {
+    return {
+      // Customer Information
+      'firstName': _firstNameController.text,
+      'lastName': _lastNameController.text,
+      'email': _emailController.text,
+      'phone': _phoneController.text,
+      
+      // Delivery Information
+      'deliveryMethod': _selectedDeliveryMethod == DeliveryMethod.standardDelivery ? 'DELIVERY' : 'PICKUP',
+      
+      // Date and Time Information
+      if (_selectedDeliveryMethod == DeliveryMethod.standardDelivery) ...{
+        'deliveryDate': _selectedDate != null 
+            ? '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
+            : null,
+        'deliveryTimeSlot': _selectedTimeSlot,
+      } else ...{
+        'pickupDate': _selectedDate != null 
+            ? '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
+            : null,
+        'pickupTimeSlot': _selectedTimeSlot,
+      },
+      
+      // Address Information (only for delivery)
+      if (_selectedDeliveryMethod == DeliveryMethod.standardDelivery) ...{
+        'streetAddress': _selectedAddress?.street ?? _streetController.text,
+        'apartment': _selectedAddress?.apartment ?? _apartmentController.text,
+        'emirate': _selectedAddress?.emirate ?? _selectedEmirate,
+        'city': _selectedAddress?.city ?? _cityController.text,
+        'pincode': _selectedAddress?.pincode ?? _pincodeController.text,
+      },
+      
+      // Order Items
+      'items': _cartService.cartItems.map((item) => ({
+        'name': item.product.name,
+        'variant': item.selectedSize ?? '',
+        'price': item.price,
+        'quantity': item.quantity,
+        'cakeWriting': item.cakeText ?? ''
+      })).toList(),
+      
+      // Payment and Totals
+      'paymentMethod': 'CREDIT_CARD', // Changed from 'CARD' to 'CREDIT_CARD'
+      'subtotal': _cartService.totalPrice,
+      'total': _calculateTotal(),
+      
+      // Optional Information
+      'isGift': _isGift,
+      'giftMessage': _isGift ? _giftMessageController.text : '',
+      
+      // Points & Discounts
+      'useRewardPoints': _isPointsRedeemed,
+      'pointsToRedeem': _isPointsRedeemed ? int.tryParse(pointsController.text) ?? 0 : 0,
+      'couponCode': _appliedCoupon && _couponController.text.isNotEmpty ? _couponController.text.trim() : '',
+    };
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
     _streetController.dispose();
@@ -167,148 +469,283 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _pincodeController.dispose();
     _couponController.dispose();
     _giftMessageController.dispose();
+    pointsController.dispose();
     super.dispose();
   }
 
-  double get _subtotal => _cartService.totalPrice;
-  double get _total => _calculateTotal();
-
-  double _calculateTotal() {
-    double total = _subtotal;
-    
-    // Add delivery charge if applicable
-    if (_deliveryMethod == DeliveryMethod.standardDelivery) {
-      total += _deliveryCharge;
-    }
-    
-    // Subtract points value if redeemed
-    if (_isPointsRedeemed) {
-      total -= _pointsValue;
-    }
-    
-    // Subtract coupon discount if applied
-    if (_couponCode != null) {
-      total -= _couponDiscount;
-    }
-    
-    return total;
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(
-        Duration(days: _deliveryMethod == DeliveryMethod.storePickup ? 7 : 30),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Checkout'),
       ),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Colors.black,
-              onPrimary: Colors.white,
-              onSurface: Colors.black,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Form(
+              key: _formKey,
+              child: ListView(
+                padding: const EdgeInsets.all(16.0),
+                children: [
+                  _buildContactForm(),
+                  const SizedBox(height: 24),
+                  _buildDeliveryOptions(),
+                  const SizedBox(height: 24),
+                  if (_selectedDeliveryMethod == DeliveryMethod.standardDelivery) ...[
+                    _buildShippingForm(),
+                    const SizedBox(height: 24),
+                  ],
+                  _buildTimeSlotSelector(),
+                  const SizedBox(height: 24),
+                  _buildRewardPointsSection(),
+                  const SizedBox(height: 24),
+                  _buildCouponSection(),
+                  const SizedBox(height: 24),
+                  _buildOrderItemsSection(),
+                  const SizedBox(height: 24),
+                  _buildPriceBreakdown(),
+                  const SizedBox(height: 32),
+                  ElevatedButton(
+                    onPressed: _placeOrder,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: Text(
+                      'Place Order - ${_cartService.totalPrice.toStringAsFixed(2)} AED',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          child: child!,
-        );
-      },
     );
-    if (picked != null) {
-      setState(() {
-        _selectedDate = picked;
-        // Reset time slot when date changes
-        _selectedTimeSlot = null;
-      });
-    }
   }
 
-  Widget _buildTimeSlotSelector() {
-    List<String> timeSlots;
-    if (_deliveryMethod == DeliveryMethod.storePickup) {
-      timeSlots = [
-        '10:00 AM',
-        '11:00 AM',
-        '12:00 PM',
-        '1:00 PM',
-        '2:00 PM',
-        '3:00 PM',
-        '4:00 PM',
-        '5:00 PM',
-        '6:00 PM',
-        '7:00 PM',
-        '8:00 PM',
-        '9:00 PM',
-      ];
-    } else {
-      // Show emirate-specific time slots or empty list if no emirate selected
-      timeSlots = _selectedEmirate != null 
-          ? _emirateTimeSlots[_selectedEmirate]!
-          : [];
-    }
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
 
-    // Reset selected time slot if it's not in the current list of time slots
-    if (_selectedTimeSlot != null && !timeSlots.contains(_selectedTimeSlot)) {
-      _selectedTimeSlot = null;
-    }
-
+  Widget _buildContactForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _buildSectionTitle('Contact Information'),
         const SizedBox(height: 16),
-        if (_deliveryMethod == DeliveryMethod.standardDelivery && _selectedEmirate != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Text(
-              'Delivery Charge: ${_deliveryCharge.toStringAsFixed(0)} AED',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+        Row(
+          children: [
+            Expanded(
+              child: _buildTextField(
+                controller: _firstNameController,
+                label: 'First Name',
+                readOnly: _firstNameReadOnly,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'First name is required';
+                  }
+                  return null;
+                },
               ),
             ),
-          ),
-        DropdownButtonFormField<String>(
-          value: _selectedTimeSlot,
-          decoration: InputDecoration(
-            labelText: _deliveryMethod == DeliveryMethod.storePickup
-                ? 'Select Pickup Time'
-                : 'Select Delivery Time',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _buildTextField(
+                controller: _lastNameController,
+                label: 'Last Name',
+                readOnly: _lastNameReadOnly,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Last name is required';
+                  }
+                  return null;
+                },
+              ),
             ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Colors.black),
-            ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          ),
-          items: timeSlots.map((slot) => DropdownMenuItem(
-                value: slot,
-                child: Text(slot),
-              )).toList(),
-          onChanged: (value) {
-            setState(() {
-              _selectedTimeSlot = value;
-            });
-          },
+          ],
+        ),
+        const SizedBox(height: 16),
+        _buildTextField(
+          controller: _emailController,
+          label: 'Email',
+          readOnly: _emailReadOnly,
+          keyboardType: TextInputType.emailAddress,
           validator: (value) {
-            if (_deliveryMethod == DeliveryMethod.standardDelivery && _selectedEmirate == null) {
-              return 'Please select an emirate first';
+            if (value == null || value.isEmpty) {
+              return 'Email is required';
             }
-            return value == null
-                ? _deliveryMethod == DeliveryMethod.storePickup
-                    ? 'Please select a pickup time'
-                    : 'Please select a delivery time'
-                : null;
+            if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+              return 'Please enter a valid email address';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 16),
+        _buildTextField(
+          controller: _phoneController,
+          label: 'Phone Number',
+          readOnly: _phoneReadOnly,
+          keyboardType: TextInputType.phone,
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return 'Phone number is required';
+            }
+            if (!RegExp(r'^[0-9+\-() ]+$').hasMatch(value)) {
+              return 'Please enter a valid phone number';
+            }
+            return null;
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildDeliveryOptions() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('Delivery Options'),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: _buildDeliveryMethodCard(
+                DeliveryMethod.storePickup,
+                'Store Pickup',
+                'Pick up from our store',
+                Icons.store,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _buildDeliveryMethodCard(
+                DeliveryMethod.standardDelivery,
+                'Standard Delivery',
+                'Delivery to your address',
+                Icons.local_shipping,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    bool readOnly = false,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+    int maxLines = 1,
+    bool enabled = true,
+  }) {
+    return TextFormField(
+      controller: controller,
+      readOnly: readOnly,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      enabled: enabled,
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.black),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        filled: !enabled,
+        fillColor: enabled ? null : Colors.grey[100],
+      ),
+      validator: validator,
+    );
+  }
+
+  Widget _buildDeliveryMethodCard(
+    DeliveryMethod method,
+    String title,
+    String subtitle,
+    IconData icon,
+  ) {
+    final isSelected = _selectedDeliveryMethod == method;
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isSelected ? Colors.black : Colors.grey[300]!,
+          width: isSelected ? 2 : 1,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          setState(() {
+            _selectedDeliveryMethod = method;
+            // Clear selected time slot when delivery method changes
+            _selectedTimeSlot = null;
+            _selectedDate = null;
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 24,
+                color: isSelected ? Colors.black : Colors.grey[600],
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal,
+                        color: isSelected ? Colors.black : Colors.grey[600],
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isSelected)
+                const Icon(
+                  Icons.check_circle,
+                  color: Colors.black,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -392,7 +829,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               child: Text(emirate),
             );
           }).toList(),
-          onChanged: _updateDeliveryCharge,
+          onChanged: (value) {
+            setState(() {
+              _selectedEmirate = value;
+              _selectedTimeSlot = null; // Reset time slot when emirate changes
+              _updateDeliveryCharge();
+            });
+          },
           validator: (value) =>
               value == null ? 'Please select an emirate' : null,
         ),
@@ -415,267 +858,236 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
+  void _updateShippingFields(Address address) {
+    _streetController.text = address.street;
+    _apartmentController.text = address.apartment ?? '';
+    _cityController.text = address.city;
+    _selectedEmirate = address.emirate;
+    _pincodeController.text = address.pincode ?? '';
   }
 
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String label,
-    TextInputType? keyboardType,
-    String? Function(String?)? validator,
-    int maxLines = 1,
-    bool enabled = true,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: keyboardType,
-      maxLines: maxLines,
-      enabled: enabled,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black),
-        ),
-        disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        filled: !enabled,
-        fillColor: enabled ? null : Colors.grey[100],
-      ),
-      validator: validator,
-    );
-  }
+  Widget _buildTimeSlotSelector() {
+    List<String> timeSlots = [];
+    
+    // Only show time slots if a date is selected
+    if (_selectedDate != null) {
+      if (_selectedDeliveryMethod == DeliveryMethod.storePickup) {
+        timeSlots = _pickupTimeSlots;
+      } else if (_selectedEmirate != null && _emirateTimeSlots.containsKey(_selectedEmirate)) {
+        timeSlots = _emirateTimeSlots[_selectedEmirate]!;
+      }
+    }
 
-  Widget _buildDeliveryMethodCard(
-    DeliveryMethod method,
-    String title,
-    String subtitle,
-    IconData icon,
-  ) {
-    final isSelected = _deliveryMethod == method;
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: isSelected ? Colors.black : Colors.grey[300]!,
-          width: isSelected ? 2 : 1,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          setState(() {
-            _deliveryMethod = method;
-            // Clear selected time slot when delivery method changes
-            _selectedTimeSlot = null;
-            _selectedDate = null;
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 24,
-                color: isSelected ? Colors.black : Colors.grey[600],
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
-                        color: isSelected ? Colors.black : Colors.grey[600],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isSelected)
-                const Icon(
-                  Icons.check_circle,
-                  color: Colors.black,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Method to toggle points redemption
-  void _togglePointsRedemption() {
-    setState(() {
-      _isPointsRedeemed = !_isPointsRedeemed;
-      _pointsValue = _isPointsRedeemed ? POINTS_VALUE : 0;
-    });
-  }
-
-  // Method to apply coupon
-  void _applyCoupon(String code) {
-    // For now, static 10% discount
-    setState(() {
-      _couponCode = code;
-      _couponDiscount = _subtotal * 0.1; // 10% discount
-    });
-  }
-
-  // Build the price breakdown section
-  Widget _buildPriceBreakdown() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey[300]!),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Price Breakdown',
-              style: TextStyle(
-                fontSize: 18,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        if (_selectedDeliveryMethod == DeliveryMethod.standardDelivery && _selectedEmirate != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Text(
+              'Delivery Charge: ${_deliveryCharge.toStringAsFixed(0)} AED',
+              style: const TextStyle(
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 16),
-            _buildPriceRow('Subtotal', _subtotal),
-            if (_deliveryMethod == DeliveryMethod.standardDelivery)
-              _buildPriceRow('Delivery Charge', _deliveryCharge),
-            if (_isPointsRedeemed)
-              _buildPriceRow(
-                'Points Redeemed ($POINTS_TO_REDEEM points)',
-                -_pointsValue,
-                isDeduction: true,
-              ),
-            if (_couponCode != null)
-              _buildPriceRow(
-                'Coupon Discount ($_couponCode)',
-                -_couponDiscount,
-                isDeduction: true,
-              ),
-            const Divider(height: 24),
-            _buildPriceRow(
-              'Total',
-              _calculateTotal(),
-              isTotal: true,
+          ),
+        // Date Selection
+        InkWell(
+          onTap: () => _selectDate(context),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(12),
             ),
-          ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _selectedDate == null
+                      ? _selectedDeliveryMethod == DeliveryMethod.storePickup
+                          ? 'Select Pickup Date'
+                          : 'Select Delivery Date'
+                      : getFormattedDate(),
+                  style: TextStyle(
+                    color: _selectedDate == null ? Colors.grey[600] : Colors.black,
+                    fontSize: 16,
+                  ),
+                ),
+                Icon(
+                  Icons.calendar_today,
+                  color: Colors.grey[600],
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
+        if (_selectedDate == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8, left: 16),
+            child: Text(
+              'Please select a date',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 12,
+              ),
+            ),
+          ),
+        const SizedBox(height: 16),
+        // Time Slot Selection
+        DropdownButtonFormField<String>(
+          value: _selectedTimeSlot,
+          decoration: InputDecoration(
+            labelText: _selectedDeliveryMethod == DeliveryMethod.storePickup
+                ? 'Select Pickup Time'
+                : 'Select Delivery Time',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.black),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          ),
+          items: timeSlots.map((slot) => DropdownMenuItem(
+            value: slot,
+            child: Text(slot),
+          )).toList(),
+          onChanged: timeSlots.isEmpty ? null : (value) {
+            setState(() {
+              _selectedTimeSlot = value;
+            });
+          },
+          validator: (value) {
+            if (_selectedDate == null) {
+              return 'Please select a date first';
+            }
+            if (value == null) {
+              return _selectedDeliveryMethod == DeliveryMethod.storePickup
+                  ? 'Please select a pickup time'
+                  : 'Please select a delivery time';
+            }
+            return null;
+          },
+        ),
+      ],
     );
   }
 
-  // Helper method to build price rows
-  Widget _buildPriceRow(String label, double amount,
-      {bool isDeduction = false, bool isTotal = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  String getFormattedDate() {
+    if (_selectedDate == null) return '';
+    return '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}';
+  }
+
+  Widget _buildRewardPointsSection() {
+    if (_customerDetails == null || _customerDetails!.rewardPoints <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Reward Points',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                '${_customerDetails?.rewardPoints ?? 0} points available',
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Text(
-            label,
+            'Redeem your points (3 points = 1 AED)',
             style: TextStyle(
-              fontSize: isTotal ? 16 : 14,
-              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+              color: Colors.grey[600],
+              fontSize: 14,
             ),
           ),
-          Text(
-            '${isDeduction ? '-' : ''}${amount.toStringAsFixed(2)} AED',
-            style: TextStyle(
-              fontSize: isTotal ? 16 : 14,
-              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
-              color: isDeduction ? Colors.red : null,
-            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: pointsController,
+                  keyboardType: TextInputType.number,
+                  enabled: _isPointsRedeemed,
+                  decoration: InputDecoration(
+                    hintText: 'Enter points to redeem',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  onChanged: (value) {
+                    int? points = int.tryParse(value);
+                    if (points != null && _customerDetails != null) {
+                      if (points > _customerDetails!.rewardPoints) {
+                        pointsController.text = _customerDetails!.rewardPoints.toString();
+                      }
+                      setState(() {});
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Switch(
+                value: _isPointsRedeemed,
+                onChanged: (value) {
+                  setState(() {
+                    _isPointsRedeemed = value;
+                    if (!value) {
+                      pointsController.clear();
+                    }
+                  });
+                },
+                activeColor: Colors.green,
+              ),
+            ],
           ),
+          if (_isPointsRedeemed && pointsController.text.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'You will save ${_calculatePointsDiscount().toStringAsFixed(2)} AED',
+              style: const TextStyle(
+                color: Colors.green,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  // Add points redemption section
-  Widget _buildPointsRedemption() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey[300]!),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Redeem Points',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'Use $POINTS_TO_REDEEM points to get $POINTS_VALUE AED off',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Switch(
-              value: _isPointsRedeemed,
-              onChanged: (_) => _togglePointsRedemption(),
-              activeColor: Colors.black,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Add coupon section
   Widget _buildCouponSection() {
     return Card(
       elevation: 0,
@@ -710,12 +1122,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         vertical: 12,
                       ),
                     ),
-                    onFieldSubmitted: _applyCoupon,
+                    onFieldSubmitted: (value) => _applyCoupon(),
                   ),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: () => _applyCoupon('SAVE10'),
+                  onPressed: _applyCoupon,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.black,
                     shape: RoundedRectangleBorder(
@@ -736,325 +1148,193 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Checkout',
-          style: TextStyle(
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black),
+  Widget _buildPriceBreakdown() {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey[300]!),
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Contact Information
-            _buildSectionTitle('Contact Information'),
-            _buildTextField(
-              controller: _nameController,
-              label: 'Full Name',
-              enabled: false,
-              validator: (value) =>
-                  value?.isEmpty ?? true ? 'Please enter your name' : null,
+            const Text(
+              'Price Breakdown',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 16),
-            _buildTextField(
-              controller: _emailController,
-              label: 'Email',
-              enabled: false,
-              keyboardType: TextInputType.emailAddress,
-              validator: (value) =>
-                  value?.isEmpty ?? true ? 'Please enter your email' : null,
+            _buildPriceRow('Subtotal', _cartService.totalPrice),
+            if (_selectedDeliveryMethod == DeliveryMethod.standardDelivery)
+              _buildPriceRow('Delivery Charge', _deliveryCharge),
+            if (_isPointsRedeemed)
+              _buildPriceRow(
+                'Points Redeemed (${pointsController.text} points)',
+                -_calculatePointsDiscount(),
+                isDeduction: true,
+              ),
+            if (_couponCode != null)
+              _buildPriceRow(
+                'Coupon Discount ($_couponCode)',
+                -_couponDiscount,
+                isDeduction: true,
+              ),
+            const Divider(height: 24),
+            _buildPriceRow(
+              'Total',
+              _calculateTotal(),
+              isTotal: true,
             ),
-            const SizedBox(height: 16),
-            _buildTextField(
-              controller: _phoneController,
-              label: 'Phone Number',
-              keyboardType: TextInputType.phone,
-              validator: (value) =>
-                  value?.isEmpty ?? true ? 'Please enter your phone number' : null,
-            ),
-            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
 
-            // Delivery Method
-            _buildSectionTitle('Delivery Method'),
-            _buildDeliveryMethodCard(
-              DeliveryMethod.storePickup,
-              'Store Pickup',
-              'Pick up your order from our store',
-              Icons.store,
+  Widget _buildPriceRow(String label, double amount,
+      {bool isDeduction = false, bool isTotal = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
             ),
-            const SizedBox(height: 12),
-            _buildDeliveryMethodCard(
-              DeliveryMethod.standardDelivery,
-              'Standard Delivery',
-              'Delivery to your address',
-              Icons.local_shipping,
+          ),
+          Text(
+            '${isDeduction ? '-' : ''}${amount.toStringAsFixed(2)} AED',
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+              color: isDeduction ? Colors.red : null,
             ),
-            const SizedBox(height: 24),
+          ),
+        ],
+      ),
+    );
+  }
 
-            // Shipping Address (only show if standard delivery is selected)
-            if (_deliveryMethod == DeliveryMethod.standardDelivery) ...[
-              _buildSectionTitle('Shipping Address'),
-              _buildShippingForm(),
-              const SizedBox(height: 24),
-            ],
-
-            // Delivery Date and Time
-            _buildSectionTitle(_deliveryMethod == DeliveryMethod.storePickup
-                ? 'Pickup Date & Time'
-                : 'Delivery Date & Time'),
-            InkWell(
-              onTap: () => _selectDate(context),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+  Widget _buildOrderItemsSection() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Order Items',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _cartService.cartItems.length,
+            itemBuilder: (context, index) {
+              final item = _cartService.cartItems[index];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.calendar_today),
-                    const SizedBox(width: 16),
-                    Text(
-                      _selectedDate != null
-                          ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                          : 'Select Date',
-                      style: TextStyle(
-                        color: _selectedDate != null
-                            ? Colors.black
-                            : Colors.grey[600],
-                        fontSize: 16,
+                    // Product Image
+                    Container(
+                      width: 60,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.grey[100],
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (_selectedDate != null) _buildTimeSlotSelector(),
-            const SizedBox(height: 24),
-
-            // Gift Option
-            _buildSectionTitle('Gift Options'),
-            Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey[300]!),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Send this as a gift',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                      child: item.product.imageUrl != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                item.product.imageUrl!,
+                                fit: BoxFit.cover,
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'We\'ll include a gift message card with your order',
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: _isGift,
-                          onChanged: (value) {
-                            setState(() {
-                              _isGift = value;
-                              if (!value) {
-                                _giftMessageController.clear();
-                              }
-                            });
-                          },
-                          activeColor: Colors.black,
-                        ),
-                      ],
+                            )
+                          : const Icon(Icons.cake, size: 30, color: Colors.grey),
                     ),
-                  ),
-                  if (_isGift) ...[
-                    const Divider(height: 1),
-                    Padding(
-                      padding: const EdgeInsets.all(16),
+                    const SizedBox(width: 12),
+                    // Product Details
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Gift Message',
-                            style: TextStyle(
+                          Text(
+                            item.product.name,
+                            style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _giftMessageController,
-                            maxLines: 3,
-                            maxLength: 200,
-                            decoration: InputDecoration(
-                              hintText: 'Write your gift message here...',
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
+                          if (item.selectedSize != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Size: ${item.selectedSize}',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
                               ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: Colors.grey[300]!),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Colors.black),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey[50],
                             ),
-                            validator: (value) {
-                              if (_isGift && (value == null || value.isEmpty)) {
-                                return 'Please enter a gift message';
-                              }
-                              return null;
-                            },
-                          ),
+                          ],
+                          if (item.cakeText != null && item.cakeText!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Text: ${item.cakeText}',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    // Price and Quantity
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${item.price.toStringAsFixed(0)} AED',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Qty: ${item.quantity}',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Coupon
-            _buildSectionTitle('Have a Coupon?'),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _couponController,
-                    decoration: InputDecoration(
-                      hintText: 'Enter coupon code',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 16,
-                      ),
-                    ),
-                    enabled: !_appliedCoupon,
-                  ),
                 ),
-                const SizedBox(width: 16),
-                ElevatedButton(
-                  onPressed: _appliedCoupon
-                      ? null
-                      : () {
-                          // TODO: Implement coupon validation
-                          setState(() {
-                            _appliedCoupon = true;
-                          });
-                        },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Text(_appliedCoupon ? 'Applied' : 'Apply'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // Order Summary
-            _buildSectionTitle('Order Summary'),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Subtotal'),
-                Text('${_subtotal.toStringAsFixed(0)} AED'),
-              ],
-            ),
-            const Divider(height: 32),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Total',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                  ),
-                ),
-                Text(
-                  '${_total.toStringAsFixed(0)} AED',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            _buildPointsRedemption(),
-            const SizedBox(height: 24),
-            _buildCouponSection(),
-            const SizedBox(height: 24),
-            _buildPriceBreakdown(),
-          ],
-        ),
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: ElevatedButton(
-            onPressed: () {
-              if (_formKey.currentState?.validate() ?? false) {
-                // TODO: Process the order
-              }
+              );
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text(
-              'Place Order (Cash on Delivery)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
           ),
-        ),
+        ],
       ),
     );
   }
